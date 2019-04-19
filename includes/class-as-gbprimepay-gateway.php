@@ -308,6 +308,115 @@ class AS_Gateway_Gbprimepay extends WC_Payment_Gateway_CC
 
                 }
             } else {
+		     $cardAccount = $this->get_card_account($gbprimepayUser, $postData); // gbprimepay card account
+
+                if ($cardAccount) { // card account created
+                    $gbprimepayApiObj = new AS_Gbprimepay_API();
+
+                    $account_settings = get_option('gbprimepay_account_settings');
+
+                    if($account_settings['environment']=='production'){
+                            if(gbp_instances('3D_SECURE_PAYMENT')==TRUE){
+
+                                  // 3-D Secure Payment
+                                  $makePaymentResponse = $gbprimepayApiObj->createSecureCharge($cardAccount['id'], $order);
+
+
+                            }else{
+
+                                  // GBPrimePay Payment
+                                  $makePaymentResponse = $gbprimepayApiObj->createCharge($cardAccount['id'], $order);
+
+                            }
+                    }else{
+
+                                  // GBPrimePay Payment
+                                  $makePaymentResponse = $gbprimepayApiObj->createCharge($cardAccount['id'], $order);
+
+                    }
+
+                    if (!$makePaymentResponse) {
+                        throw new Exception(__('Something went wrong while creating charge.'));
+                    }
+
+
+
+                        $is_response_action = isset($makePaymentResponse['RedirectURL']) ? $makePaymentResponse['RedirectURL'] : '';
+                        if($is_response_action==true){
+                          $responseRedirectURL='true';
+                        }else{
+                          $responseRedirectURL='false';
+                        }
+
+                        if ($responseRedirectURL=='true') {
+
+                                  // 3-D Secure Payment
+                                  $gbprimepay_otpcharge = WC()->session->get('gbprimepay_otpcharge');
+
+                                  if ($gbprimepay_otpcharge['resultCode'] == '00') {
+
+                                      $order->update_status('on-hold', __( 'Awaiting 3-D Secure Payment', 'gbprimepay-payment-gateways' ));
+
+                                      // Remove cart.
+                                      WC()->cart->empty_cart();
+                                  }
+
+                                    return array(
+                                        'result' => 'success',
+                                        'redirect' => $is_response_action,
+                                    );
+                        }else{
+
+
+                          // GBPrimePay Payment
+                          if ($makePaymentResponse['resultCode'] == '00') {
+                              $gbprimepayApiObj = new AS_Gbprimepay_API();
+                              $getCardResponse = $gbprimepayApiObj->getCardAccount($cardAccount['id']);
+                              $is_save_action = isset($postData['wc-gbprimepay-new-payment-method']) ? $postData['wc-gbprimepay-new-payment-method'] : '';
+                              if($is_save_action==true){
+                                $customer_rememberCard='true';
+                              }else{
+                                $customer_rememberCard='false';
+                              }
+
+                              if (class_exists('WC_Payment_Token_CC') && $this->saved_cards) {
+                                        if ($customer_rememberCard == 'true') {
+                                                $token = new WC_Payment_Token_CC();
+                                                $token->set_token($cardAccount['id']);
+                                                $token->set_gateway_id('gbprimepay');
+                                                $token->set_card_type($getCardResponse['card']['type']);
+                                                $token->set_last4(substr($getCardResponse['card']['number'], -4));
+                                                $token->set_expiry_month($getCardResponse['card']['expiry_month']);
+                                                $token->set_expiry_year('20' . $getCardResponse['card']['expiry_year']);
+                                                $token->set_user_id(get_current_user_id());
+                                                $token->save();
+                                        }
+                              }
+                              $order->payment_complete($makePaymentResponse['id']);
+                              update_post_meta($order_id, 'Gbprimepay Charge ID', $makePaymentResponse['id']);
+
+                              // Remove cart.
+                              WC()->cart->empty_cart();
+
+                              // Return thank you page redirect.
+                              return array(
+                                  'result' => 'success',
+                                  'redirect' => $this->get_return_url($order),
+                              );
+                          }
+
+
+
+
+
+                        }
+
+
+
+
+
+                }
+		/*
                 $tokenId = $postData['wc-gbprimepay-payment-token'];
                 $token = WC_Payment_Tokens::get($tokenId);
 
@@ -389,6 +498,7 @@ class AS_Gateway_Gbprimepay extends WC_Payment_Gateway_CC
 
 
                 }
+		*/
             }
 
         } catch (Exception $e) {
